@@ -23,7 +23,7 @@ class QueryBuilderHandler
     protected $statements = array();
 
     /**
-     * @var PDO
+     * @var \PDO
      */
     protected $pdo;
 
@@ -38,6 +38,16 @@ class QueryBuilderHandler
     protected $tablePrefix = null;
 
     /**
+     * @var string
+     */
+    protected $adapter;
+
+    /**
+     * @var array
+     */
+    protected $adapterConfig;
+
+    /**
      * @var \Pixie\QueryBuilder\Adapters\BaseAdapter
      */
     protected $adapterInstance;
@@ -47,15 +57,14 @@ class QueryBuilderHandler
      *
      * @var array
      */
-    protected $fetchParameters = array(PDO::FETCH_OBJ);
+    protected $fetchParameters = array(\PDO::FETCH_OBJ);
 
     /**
      * @param null|\Pixie\Connection $connection
      *
-     * @param int $fetchMode
-     * @throws Exception
+     * @throws \Pixie\Exception
      */
-    public function __construct(Connection $connection = null, $fetchMode = PDO::FETCH_OBJ)
+    public function __construct($connection = null)
     {
         if (is_null($connection)) {
             if (!$connection = Connection::getStoredConnection()) {
@@ -65,11 +74,8 @@ class QueryBuilderHandler
 
         $this->connection = $connection;
         $this->container = $this->connection->getContainer();
-        $this->pdo = $this->connection->getPdoInstance();
         $this->adapter = $this->connection->getAdapter();
         $this->adapterConfig = $this->connection->getAdapterConfig();
-
-        $this->setFetchMode($fetchMode);
 
         if (isset($this->adapterConfig['prefix'])) {
             $this->tablePrefix = $this->adapterConfig['prefix'];
@@ -80,8 +86,6 @@ class QueryBuilderHandler
             '\\Pixie\\QueryBuilder\\Adapters\\' . ucfirst($this->adapter),
             array($this->connection)
         );
-
-        $this->pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
     }
 
     /**
@@ -105,21 +109,21 @@ class QueryBuilderHandler
      */
     public function asObject($className, $constructorArgs = array())
     {
-        return $this->setFetchMode(PDO::FETCH_CLASS, $className, $constructorArgs);
+        return $this->setFetchMode(\PDO::FETCH_CLASS, $className, $constructorArgs);
     }
 
     /**
      * @param null|\Pixie\Connection $connection
-     * @return QueryBuilderHandler
-     * @throws Exception
+     *
+     * @return static
      */
-    public function newQuery(Connection $connection = null)
+    public function newQuery($connection = null)
     {
         if (is_null($connection)) {
             $connection = $this->connection;
         }
 
-        return new static($connection, $this->getFetchMode());
+        return new static($connection);
     }
 
     /**
@@ -130,6 +134,37 @@ class QueryBuilderHandler
      */
     public function query($sql, $bindings = array())
     {
+		if($this->adapter == 'mysql') {
+			$sql = str_ireplace('ILIKE','LIKE',$sql);
+		}
+		
+		$illegalQueryPrefix = array(
+			'TRUNCATE',
+			'ALTER',
+			'EXECUTE',
+			'UPDATE',
+			'DELETE',
+			'INSERT INTO'
+		);
+		
+		if($GLOBALS['ue_globvar_use_server_cache'] == true) {
+			$deleteCacheOnRawQuery = false;
+			
+			//Remove Cache based On Query Prefix on RAW QUERY
+			foreach($illegalQueryPrefix as $illegalQueryPrefixKey => $illegalQueryPrefixVal) {
+				$illegalQueryPrefixVal = $illegalQueryPrefixVal.' ';
+				if(substr($sql,0,strlen($illegalQueryPrefixVal)) == $illegalQueryPrefixVal) {
+					$getTableNameStr = preg_replace('/'.$illegalQueryPrefixVal.'/','',$sql,1);
+					$getTableNameStr = explode(' ',$getTableNameStr,2);
+					$getTableNameStr = $getTableNameStr[0];
+					if($getTableNameStr) {
+						ueDeleteKeywordCache($getTableNameStr);
+					}
+					break;
+				}
+			}
+		}
+		
         list($this->pdoStatement) = $this->statement($sql, $bindings);
 
         return $this;
@@ -143,6 +178,9 @@ class QueryBuilderHandler
      */
     public function statement($sql, $bindings = array())
     {
+        if (!$this->pdo) {
+            $this->pdo = $this->connection->getPdoInstance();
+        }
         $start = microtime(true);
         $pdoStatement = $this->pdo->prepare($sql);
         foreach ($bindings as $key => $value) {
@@ -159,8 +197,7 @@ class QueryBuilderHandler
     /**
      * Get all rows
      *
-     * @return \stdClass|array
-     * @throws Exception
+     * @return \stdClass|null
      */
     public function get()
     {
@@ -170,6 +207,7 @@ class QueryBuilderHandler
         };
 
         $executionTime = 0;
+		$executionTimeCached = 0;
         if (is_null($this->pdoStatement)) {
             $queryObject = $this->getQuery('select');
             list($this->pdoStatement, $executionTime) = $this->statement(
@@ -177,12 +215,59 @@ class QueryBuilderHandler
                 $queryObject->getBindings()
             );
         }
+		
+		
+		$blacklistedTablesArr = array(
+			'analytics'
+		);
+		
+		$allowCache = true;
+		if(isset($this->statements['tables']) == true && is_array($this->statements['tables']) == true) {
+			foreach($blacklistedTablesArr as $blacklistedTablesArrKey => $blacklistedTablesArrVal) {
+				if(in_array($blacklistedTablesArrVal,$this->statements['tables'])) {
+					$allowCache = false;
+					break;
+				}
+			}
+		}
+		
+		$result = false;
+		$rawQueryStr = '';
+		if($GLOBALS['ue_globvar_use_server_cache'] == true && $allowCache == true) {
+			if(isset($queryObject)) {
+				@ $rawQueryStr = $queryObject->getRawSql();
+			}
+			else {
+				$rawQueryStr = $this->pdoStatement->queryString;
+			}
+			
+			$start = microtime(true);
+			$result = ueGetCache($rawQueryStr);
+			$executionTimeCached = $executionTime + microtime(true) - $start;
+		}
+		
+		if($result === false) {
+			$start = microtime(true);
+			$result = call_user_func_array(array($this->pdoStatement, 'fetchAll'), $this->fetchParameters);
+			$executionTime += microtime(true) - $start;
+			
+			if(
+				$GLOBALS['ue_globvar_use_server_cache'] == true &&
+				$rawQueryStr != '' &&
+				isset($this->statements['tables']) == true &&
+				is_array($this->statements['tables']) &&
+				count($this->statements['tables']) > 0
+			) {
+				ueSetCache($rawQueryStr,$result,'auto',$this->statements['tables']);
+			}
+		}
+		else {
+			$executionTime += $executionTimeCached;
+		}
 
-        $start = microtime(true);
-        $result = call_user_func_array(array($this->pdoStatement, 'fetchAll'), $this->fetchParameters);
-        $executionTime += microtime(true) - $start;
         $this->pdoStatement = null;
         $this->fireEvents('after-select', $result, $executionTime);
+		
         return $result;
     }
 
@@ -247,39 +332,50 @@ class QueryBuilderHandler
      *
      * @return int
      */
-    protected function aggregate($type)
-    {
-        // Get the current selects
-        $mainSelects = isset($this->statements['selects']) ? $this->statements['selects'] : null;
-        // Replace select with a scalar value like `count`
-        $this->statements['selects'] = array($this->raw($type . '(*) as field'));
-        $row = $this->get();
+	protected function aggregate($type)
+	{
+		// Get the current selects
+		$mainSelects = isset($this->statements['selects']) ? $this->statements['selects'] : null;
+		// Replace select with a scalar value like `count`
+		$this->statements['selects'] = array($this->raw($type . '(*) as field'));
+		$row = $this->get();
 
-        // Set the select as it was
-        if ($mainSelects) {
-            $this->statements['selects'] = $mainSelects;
-        } else {
-            unset($this->statements['selects']);
-        }
+		// Set the select as it was
+		if ($mainSelects) {
+			$this->statements['selects'] = $mainSelects;
+		} else {
+			unset($this->statements['selects']);
+		}
 
-        if (is_array($row[0])) {
-            return (int)$row[0]['field'];
-        } elseif (is_object($row[0])) {
-            return (int)$row[0]->field;
-        }
+		// If there's a GROUP BY, return number of groups (rows)
+		if (isset($this->statements['groupBys'])) {
+			return is_array($row) ? count($row) : 0;
+		}
 
-        return 0;
-    }
+		if (isset($row[0])) {
+			if (is_array($row[0])) {
+				return (int) $row[0]['field'];
+			} elseif (is_object($row[0])) {
+				return (int) $row[0]->field;
+			}
+		}
+
+		return 0;
+	}
 
     /**
      * @param string $type
-     * @param array $dataToBePassed
+     * @param array  $dataToBePassed
      *
      * @return mixed
      * @throws Exception
      */
     public function getQuery($type = 'select', $dataToBePassed = array())
     {
+        if (!$this->pdo) {
+            $this->pdo = $this->connection->getPdoInstance();
+        }
+
         $allowedTypes = array('select', 'insert', 'insertignore', 'replace', 'delete', 'update', 'criteriaonly');
         if (!in_array(strtolower($type), $allowedTypes)) {
             throw new Exception($type . ' is not a known type.', 2);
@@ -295,7 +391,7 @@ class QueryBuilderHandler
 
     /**
      * @param QueryBuilderHandler $queryBuilder
-     * @param null $alias
+     * @param null                $alias
      *
      * @return Raw
      */
@@ -346,6 +442,12 @@ class QueryBuilderHandler
         }
 
         $this->fireEvents('after-insert', $return, $executionTime);
+		
+		if($GLOBALS['ue_globvar_use_server_cache'] == true) {
+			foreach($this->statements['tables'] as $deleteKeywordKey => $deleteKeywordVal) {
+				ueDeleteKeywordCache($deleteKeywordVal);
+			}
+		}
 
         return $return;
     }
@@ -396,6 +498,12 @@ class QueryBuilderHandler
 
         list($response, $executionTime) = $this->statement($queryObject->getSql(), $queryObject->getBindings());
         $this->fireEvents('after-update', $queryObject, $executionTime);
+		
+		if($GLOBALS['ue_globvar_use_server_cache'] == true) {
+			foreach($this->statements['tables'] as $deleteKeywordKey => $deleteKeywordVal) {
+				ueDeleteKeywordCache($deleteKeywordVal);
+			}
+		}
 
         return $response;
     }
@@ -407,6 +515,12 @@ class QueryBuilderHandler
      */
     public function updateOrInsert($data)
     {
+		if($GLOBALS['ue_globvar_use_server_cache'] == true) {
+			foreach($this->statements['tables'] as $deleteKeywordKey => $deleteKeywordVal) {
+				ueDeleteKeywordCache($deleteKeywordVal);
+			}
+		}
+		
         if ($this->first()) {
             return $this->update($data);
         } else {
@@ -421,6 +535,12 @@ class QueryBuilderHandler
      */
     public function onDuplicateKeyUpdate($data)
     {
+		if($GLOBALS['ue_globvar_use_server_cache'] == true) {
+			foreach($this->statements['tables'] as $deleteKeywordKey => $deleteKeywordVal) {
+				ueDeleteKeywordCache($deleteKeywordVal);
+			}
+		}
+		
         $this->addStatement('onduplicate', $data);
         return $this;
     }
@@ -439,15 +559,21 @@ class QueryBuilderHandler
 
         list($response, $executionTime) = $this->statement($queryObject->getSql(), $queryObject->getBindings());
         $this->fireEvents('after-delete', $queryObject, $executionTime);
+		
+		if($GLOBALS['ue_globvar_use_server_cache'] == true) {
+			foreach($this->statements['tables'] as $deleteKeywordKey => $deleteKeywordVal) {
+				ueDeleteKeywordCache($deleteKeywordVal);
+			}
+		}
 
         return $response;
     }
 
     /**
-     * @param string|array $tables Single table or array of tables
+     * @param $tables Single table or multiple tables as an array or as
+     *                multiple parameters
      *
-     * @return QueryBuilderHandler
-     * @throws Exception
+     * @return static
      */
     public function table($tables)
     {
@@ -457,7 +583,7 @@ class QueryBuilderHandler
             $tables = func_get_args();
         }
 
-        $instance = new static($this->connection, $this->getFetchMode());
+        $instance = new static($this->connection);
         $tables = $this->addTablePrefix($tables, false);
         $instance->addStatement('tables', $tables);
         return $instance;
@@ -795,7 +921,7 @@ class QueryBuilderHandler
         // Build a new JoinBuilder class, keep it by reference so any changes made
         // in the closure should reflect here
         $joinBuilder = $this->container->build('\\Pixie\\QueryBuilder\\JoinBuilder', array($this->connection));
-        $joinBuilder = &$joinBuilder;
+        $joinBuilder = & $joinBuilder;
         // Call the closure with our new joinBuilder object
         $key($joinBuilder);
         $table = $this->addTablePrefix($table, false);
@@ -814,6 +940,9 @@ class QueryBuilderHandler
      */
     public function transaction(\Closure $callback)
     {
+        if (!$this->pdo) {
+            $this->pdo = $this->connection->getPdoInstance();
+        }
         try {
             // Begin the PDO transaction
             $this->pdo->beginTransaction();
@@ -888,6 +1017,10 @@ class QueryBuilderHandler
      */
     public function raw($value, $bindings = array())
     {
+		if($this->adapter == 'mysql') {
+			$value = str_ireplace('ILIKE','LIKE',$value);
+		}
+		
         return $this->container->build('\\Pixie\\QueryBuilder\\Raw', array($value, $bindings));
     }
 
@@ -898,8 +1031,26 @@ class QueryBuilderHandler
      */
     public function pdo()
     {
+        if (!$this->pdo) {
+            $this->pdo = $this->connection->getPdoInstance();
+        }
         return $this->pdo;
     }
+	
+    /**
+     * CLOSE PDO instance
+     *
+     * @return PDO
+     */
+	public function close()
+	{
+		// this line does the job
+		if ($this->pdo) {
+			try { $this->pdo->query('KILL CONNECTION_ID()'); } catch (\PDOException $e) {}
+		}
+		// this should close the connection, but doesn't.
+		return $this->pdo = $this->connection = $this->container = $this->pdoStatement = null;
+	}
 
     /**
      * @param Connection $connection
@@ -998,8 +1149,16 @@ class QueryBuilderHandler
 
         if (!array_key_exists($key, $this->statements)) {
             $this->statements[$key] = $value;
+			
+			if($key == 'tables') {
+				$this->statements['tables'] = $value;
+			}
         } else {
             $this->statements[$key] = array_merge($this->statements[$key], $value);
+			
+			if($key == 'tables') {
+				$this->statements['tables'] = array_merge($this->statements['tables'], $value);
+			}
         }
     }
 
@@ -1016,7 +1175,7 @@ class QueryBuilderHandler
 
     /**
      * @param          $event
-     * @param string $table
+     * @param string   $table
      * @param callable $action
      *
      * @return void
@@ -1034,7 +1193,7 @@ class QueryBuilderHandler
 
     /**
      * @param          $event
-     * @param string $table
+     * @param string   $table
      *
      * @return void
      */
@@ -1064,14 +1223,5 @@ class QueryBuilderHandler
     public function getStatements()
     {
         return $this->statements;
-    }
-
-    /**
-     * @return int will return PDO Fetch mode
-     */
-    public function getFetchMode()
-    {
-        return !empty($this->fetchParameters) ?
-            current($this->fetchParameters) : PDO::FETCH_OBJ;
     }
 }

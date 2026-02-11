@@ -1,12 +1,12 @@
-**This project is Not Actively Maintained but most of the features are fully working and there are no major security issues, I'm just not giving it much time.**
+A fork of the original Pixie by Usman Halalit
 
+Changes:
+• Support for PHP 8.4+
+• Now Pixie will only make a connection to the database if a query is called
+• Fix issue with `count()` https://github.com/usmanhalalit/pixie/issues/202
+• Minor changes for my local use-case
 
 # Pixie Query Builder 
-
-[![Build Status](https://travis-ci.org/usmanhalalit/pixie.svg?branch=master)](https://travis-ci.org/usmanhalalit/pixie)
-[![Total Downloads](https://poser.pugx.org/usmanhalalit/pixie/downloads)](https://packagist.org/packages/usmanhalalit/pixie)
-[![Daily Downloads](https://poser.pugx.org/usmanhalalit/pixie/d/daily)](https://packagist.org/packages/usmanhalalit/pixie)
-
 
 A lightweight, expressive, framework agnostic query builder for PHP it can also be referred as a Database Abstraction Layer. Pixie supports MySQL, SQLite and PostgreSQL and it takes care of query sanitization, table prefixing and many other things with a unified API.
 
@@ -80,13 +80,13 @@ Pixie uses [Composer](http://getcomposer.org/doc/00-intro.md#installation-nix) t
 
 Learn to use composer and add this to require section (in your composer.json):
 
-    "usmanhalalit/pixie": "2.*@dev"
+    "catchem88/ue-pixie": "2.*@dev"
 
 And run:
 
     composer update
 
-Library on [Packagist](https://packagist.org/packages/usmanhalalit/pixie).
+Library on [Packagist](https://packagist.org/packages/catchem88/ue-pixie).
 
 ## Full Usage API
 

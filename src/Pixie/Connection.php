@@ -42,13 +42,17 @@ class Connection
      * @param null|string   $alias
      * @param Container     $container
      */
-    public function __construct($adapter, array $adapterConfig, $alias = null, Container $container = null)
+    public function __construct($adapter, array $adapterConfig, $alias = null, $container = null)
     {
         $container = $container ? : new Container();
 
         $this->container = $container;
 
-        $this->setAdapter($adapter)->setAdapterConfig($adapterConfig)->connect();
+        $this->setAdapter($adapter)->setAdapterConfig($adapterConfig);
+
+        if (!static::$storedConnection) {
+            static::$storedConnection = $this;
+        }
 
         // Create event dependency
         $this->eventHandler = $this->container->build('\\Pixie\\EventHandler');
@@ -65,9 +69,18 @@ class Connection
      */
     public function createAlias($alias)
     {
-        class_alias('Pixie\\AliasFacade', $alias);
+		$evalOk = false;
+		@ eval('$evalOk = true;');
+		
+		if($evalOk) {
+			eval("class $alias extends Pixie\\AliasFacade {}");
+		}
+		else {
+			class_alias('Pixie\\AliasFacade', $alias);
+		}
+		
         $builder = $this->container->build('\\Pixie\\QueryBuilder\\QueryBuilderHandler', array($this));
-        AliasFacade::setQueryBuilderInstance($builder);
+        AliasFacade::setQueryBuilderInstance($alias, $builder);
     }
 
     /**
@@ -91,12 +104,8 @@ class Connection
         $adapterInstance = $this->container->build($adapter, array($this->container));
 
         $pdo = $adapterInstance->connect($this->adapterConfig);
+        $pdo->setAttribute(\PDO::ATTR_ERRMODE, \PDO::ERRMODE_EXCEPTION);
         $this->setPdoInstance($pdo);
-
-        // Preserve the first database connection with a static property
-        if (!static::$storedConnection) {
-            static::$storedConnection = $this;
-        }
     }
 
     /**
@@ -115,6 +124,9 @@ class Connection
      */
     public function getPdoInstance()
     {
+        if (!$this->pdoInstance) {
+            $this->connect();
+        }
         return $this->pdoInstance;
     }
 

@@ -89,8 +89,21 @@ class QueryObject
             }
         }
 
-        $query = preg_replace($keys, $values, $query, 1, $count);
+		//UE Update START
+		$queryResult = '';
+		$queryResultTmp = 0;
+		$queryArr = explode('?',$query);
+		foreach($queryArr as $queryArrKey => $queryArrVal) {
+			$queryResult .= $queryArrVal.($values[$queryResultTmp] ?? '');
+			$queryResultTmp++;
+		}
+		
+		return $queryResult;
+		//UE Update END
 
-        return $query;
+		//PIXIE BUILT IN MODE START
+        //$query = preg_replace($keys, $values, $query, 1, $count);
+        //return $query;
+		//PIXIE BUILT IN MODE END
     }
 }

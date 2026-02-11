@@ -32,20 +32,25 @@ abstract class BaseAdapter
      */
     public function select($statements)
     {
-        if (!array_key_exists('tables', $statements)) {
-            throw new Exception('No table specified.', 3);
-        } elseif (!array_key_exists('selects', $statements)) {
+        if (!array_key_exists('selects', $statements)) {
             $statements['selects'][] = '*';
         }
 
         // From
-        $tables = $this->arrayStr($statements['tables'], ', ');
+        $fromEnabled = false;
+        $tables = '';
+
+        if(isset($statements['tables'])) {
+            $tables = $this->arrayStr($statements['tables'], ', ');
+            $fromEnabled = true;
+        }
+		
         // Select
         $selects = $this->arrayStr($statements['selects'], ', ');
 
-
         // Wheres
         list($whereCriteria, $whereBindings) = $this->buildCriteriaWithType($statements, 'wheres', 'WHERE');
+		
         // Group bys
         $groupBys = '';
         if (isset($statements['groupBys']) && $groupBys = $this->arrayStr($statements['groupBys'], ', ')) {
@@ -65,8 +70,8 @@ abstract class BaseAdapter
         }
 
         // Limit and offset
-        $limit = isset($statements['limit']) ? 'LIMIT ' . (int) $statements['limit'] : '';
-        $offset = isset($statements['offset']) ? 'OFFSET ' . (int) $statements['offset'] : '';
+        $limit = isset($statements['limit']) ? 'LIMIT ' . (int)$statements['limit'] : '';
+        $offset = isset($statements['offset']) ? 'OFFSET ' . (int)$statements['offset'] : '';
 
         // Having
         list($havingCriteria, $havingBindings) = $this->buildCriteriaWithType($statements, 'havings', 'HAVING');
@@ -77,7 +82,7 @@ abstract class BaseAdapter
         $sqlArray = array(
             'SELECT' . (isset($statements['distinct']) ? ' DISTINCT' : ''),
             $selects,
-            'FROM',
+            (($fromEnabled) ? 'FROM' : ''),
             $tables,
             $joinString,
             $whereCriteria,
@@ -129,10 +134,6 @@ abstract class BaseAdapter
      */
     private function doInsert($statements, array $data, $type)
     {
-        if (!isset($statements['tables'])) {
-            throw new Exception('No table specified', 3);
-        }
-
         $table = end($statements['tables']);
 
         $bindings = $keys = $values = array();
@@ -164,7 +165,7 @@ abstract class BaseAdapter
             $bindings = array_merge($bindings, $updateBindings);
         }
 
-        $sql = $this->concatenateQuery($sqlArray);
+        $sql = $this->concatenateQuery($sqlArray, ' ', false);
 
         return compact('sql', 'bindings');
     }
@@ -247,9 +248,7 @@ abstract class BaseAdapter
      */
     public function update($statements, array $data)
     {
-        if (!isset($statements['tables'])) {
-            throw new Exception('No table specified', 3);
-        } elseif (count($data) < 1) {
+        if (count($data) < 1) {
             throw new Exception('No data given.', 4);
         }
 
@@ -272,7 +271,7 @@ abstract class BaseAdapter
             $limit
         );
 
-        $sql = $this->concatenateQuery($sqlArray);
+        $sql = $this->concatenateQuery($sqlArray, ' ', false);
 
         $bindings = array_merge($bindings, $whereBindings);
         return compact('sql', 'bindings');
@@ -288,10 +287,6 @@ abstract class BaseAdapter
      */
     public function delete($statements)
     {
-        if (!isset($statements['tables'])) {
-            throw new Exception('No table specified', 3);
-        }
-
         $table = end($statements['tables']);
 
         // Wheres
@@ -301,7 +296,7 @@ abstract class BaseAdapter
         $limit = isset($statements['limit']) ? 'LIMIT ' . $statements['limit'] : '';
 
         $sqlArray = array('DELETE FROM', $this->wrapSanitizer($table), $whereCriteria);
-        $sql = $this->concatenateQuery($sqlArray);
+        $sql = $this->concatenateQuery($sqlArray, ' ', false);
         $bindings = $whereBindings;
 
         return compact('sql', 'bindings');
@@ -363,6 +358,16 @@ abstract class BaseAdapter
     {
         $criteria = '';
         $bindings = array();
+		
+		//Replace ILIKE to LIKE for MySQL
+		if($this->sanitizer == '`') {
+			foreach($statements as $statementsKey => $statementsVal) {
+				if(strtoupper(($statementsVal['operator'] ?? '')) == 'ILIKE') {
+					$statements[$statementsKey]['operator'] = 'LIKE';
+				}
+			}
+		}
+		
         foreach ($statements as $statement) {
             $key = $this->wrapSanitizer($statement['key']);
             $value = $statement['value'];
