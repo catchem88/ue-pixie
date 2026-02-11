@@ -1,10 +1,10 @@
 A fork of the original Pixie by Usman Halalit
 
 Changes:
-• Support for PHP 8.4+
-• Now Pixie will only make a connection to the database if a query is called
-• Fix issue with `count()` https://github.com/usmanhalalit/pixie/issues/202
-• Minor changes for my local use-case
+- Support for PHP 8.4+
+- Now Pixie will only make a connection to the database if a query is called
+- Fix issue with `count()` https://github.com/usmanhalalit/pixie/issues/202
+- Minor changes for my local use-case
 
 # Pixie Query Builder 
 
