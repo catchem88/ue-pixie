@@ -147,7 +147,7 @@ class QueryBuilderHandler
 			'INSERT INTO'
 		);
 		
-		if($GLOBALS['ue_globvar_use_server_cache'] == true) {
+		if(($GLOBALS['ue_globvar_use_server_cache'] ?? false) == true) {
 			$deleteCacheOnRawQuery = false;
 			
 			//Remove Cache based On Query Prefix on RAW QUERY
@@ -233,7 +233,7 @@ class QueryBuilderHandler
 		
 		$result = false;
 		$rawQueryStr = '';
-		if($GLOBALS['ue_globvar_use_server_cache'] == true && $allowCache == true) {
+		if(($GLOBALS['ue_globvar_use_server_cache'] ?? false) == true && $allowCache == true) {
 			if(isset($queryObject)) {
 				@ $rawQueryStr = $queryObject->getRawSql();
 			}
@@ -252,7 +252,7 @@ class QueryBuilderHandler
 			$executionTime += microtime(true) - $start;
 			
 			if(
-				$GLOBALS['ue_globvar_use_server_cache'] == true &&
+				($GLOBALS['ue_globvar_use_server_cache'] ?? false) == true &&
 				$rawQueryStr != '' &&
 				isset($this->statements['tables']) == true &&
 				is_array($this->statements['tables']) &&
