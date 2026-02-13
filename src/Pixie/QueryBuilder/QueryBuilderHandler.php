@@ -147,24 +147,6 @@ class QueryBuilderHandler
 			'INSERT INTO'
 		);
 		
-		if(($GLOBALS['ue_globvar_use_server_cache'] ?? false) == true) {
-			$deleteCacheOnRawQuery = false;
-			
-			//Remove Cache based On Query Prefix on RAW QUERY
-			foreach($illegalQueryPrefix as $illegalQueryPrefixKey => $illegalQueryPrefixVal) {
-				$illegalQueryPrefixVal = $illegalQueryPrefixVal.' ';
-				if(substr($sql,0,strlen($illegalQueryPrefixVal)) == $illegalQueryPrefixVal) {
-					$getTableNameStr = preg_replace('/'.$illegalQueryPrefixVal.'/','',$sql,1);
-					$getTableNameStr = explode(' ',$getTableNameStr,2);
-					$getTableNameStr = $getTableNameStr[0];
-					if($getTableNameStr) {
-						ueDeleteKeywordCache($getTableNameStr);
-					}
-					break;
-				}
-			}
-		}
-		
         list($this->pdoStatement) = $this->statement($sql, $bindings);
 
         return $this;
@@ -231,39 +213,9 @@ class QueryBuilderHandler
 			}
 		}
 		
-		$result = false;
-		$rawQueryStr = '';
-		if(($GLOBALS['ue_globvar_use_server_cache'] ?? false) == true && $allowCache == true) {
-			if(isset($queryObject)) {
-				@ $rawQueryStr = $queryObject->getRawSql();
-			}
-			else {
-				$rawQueryStr = $this->pdoStatement->queryString;
-			}
-			
-			$start = microtime(true);
-			$result = ueGetCache($rawQueryStr);
-			$executionTimeCached = $executionTime + microtime(true) - $start;
-		}
-		
-		if($result === false) {
-			$start = microtime(true);
-			$result = call_user_func_array(array($this->pdoStatement, 'fetchAll'), $this->fetchParameters);
-			$executionTime += microtime(true) - $start;
-			
-			if(
-				($GLOBALS['ue_globvar_use_server_cache'] ?? false) == true &&
-				$rawQueryStr != '' &&
-				isset($this->statements['tables']) == true &&
-				is_array($this->statements['tables']) &&
-				count($this->statements['tables']) > 0
-			) {
-				ueSetCache($rawQueryStr,$result,'auto',$this->statements['tables']);
-			}
-		}
-		else {
-			$executionTime += $executionTimeCached;
-		}
+		$start = microtime(true);
+		$result = call_user_func_array(array($this->pdoStatement, 'fetchAll'), $this->fetchParameters);
+		$executionTime += microtime(true) - $start;
 
         $this->pdoStatement = null;
         $this->fireEvents('after-select', $result, $executionTime);
